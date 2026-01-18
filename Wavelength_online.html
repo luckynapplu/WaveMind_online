@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wavelength Online</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
+    <style>
+        /* デザイン設定（以前と同じ） */
+        body { font-family: sans-serif; background-color: #1a1a1a; color: #fff; text-align: center; padding: 20px; user-select: none; }
+        .card { background: #2d2d2d; padding: 20px; border-radius: 15px; max-width: 500px; margin: 0 auto; border-top: 5px solid #555; }
+        .btn { background-color: #555; border: none; color: white; padding: 15px 0; width: 100%; border-radius: 50px; font-size: 18px; margin: 10px 0; cursor: pointer; font-weight: bold; }
+        .btn-blue { background-color: #2196F3; } .btn-red { background-color: #F44336; } .btn-green { background-color: #4CAF50; }
+        .hidden { display: none !important; }
+        .big-number { font-size: 60px; font-weight: bold; color: #ffeb3b; margin: 20px 0; }
+        input[type=range] { width: 100%; margin: 30px 0; cursor: pointer; }
+        
+        /* 簡易チャット/ログ */
+        #status-log { color: #aaa; font-size: 12px; margin-bottom: 10px; min-height: 20px; }
+
+        /* 結果バー */
+        .result-viz-container { position: relative; width: 100%; height: 60px; background-color: #444; border-radius: 8px; margin: 15px 0; overflow: hidden; }
+        .zone { position: absolute; height: 100%; top: 0; opacity: 0.8; }
+        .zone-2 { background-color: #4fc3f7; } .zone-3 { background-color: #ffd740; } .zone-4 { background-color: #ff6e40; }
+        .guess-pin { position: absolute; top: 0; width: 4px; height: 100%; background-color: #fff; z-index: 10; box-shadow: 0 0 4px #000; transition: left 0.1s; }
+        .target-pin { position: absolute; top: 0; width: 2px; height: 100%; background-color: #ffeb3b; z-index: 5; opacity: 0.5; border-left: 1px dashed #000; }
+        
+        /* ピークボタン（自分だけ見る） */
+        .peek-btn { background: #333; border: 1px solid #777; color: #aaa; padding: 5px 10px; border-radius: 5px; margin-bottom: 10px; cursor: pointer; }
+        .peek-content { filter: blur(10px); transition: filter 0.3s; }
+        .peek-active { filter: blur(0); }
+    </style>
+</head>
+<body>
+
+    <div id="screen-login" class="card">
+        <h1>Wavelength Online</h1>
+        <p>合言葉を決めて友達と繋がろう</p>
+        <input type="text" id="room-id" placeholder="合言葉 (例: apple)" style="padding:10px; font-size:20px; width:80%; text-align:center; margin-bottom:20px;">
+        <button class="btn btn-green" onclick="joinRoom()">部屋に入る / 作る</button>
+    </div>
+
+    <div id="screen-game" class="card hidden">
+        <div style="display:flex; justify-content:space-between; font-size:12px; color:#aaa; margin-bottom:10px;">
+            <span>Room: <span id="display-room-id" style="color:#fff;"></span></span>
+            <span id="connection-status">● 接続中</span>
+        </div>
+        
+        <div style="background:#333; padding:10px; border-radius:8px; display:flex; justify-content:space-between; margin-bottom:15px;">
+            <div style="text-align:center; width:45%;">
+                <div style="font-size:12px; color:#2196F3;">TEAM A</div>
+                <div id="score-a" style="font-size:24px; font-weight:bold;">0</div>
+            </div>
+            <div style="font-size:20px; line-height:50px;">VS</div>
+            <div style="text-align:center; width:45%;">
+                <div style="font-size:12px; color:#F44336;">TEAM B</div>
+                <div id="score-b" style="font-size:24px; font-weight:bold;">0</div>
+            </div>
+        </div>
+
+        <p id="status-text" style="font-size:18px; font-weight:bold; color:#ffeb3b;">待機中...</p>
+
+        <div id="phase-psychic" class="hidden">
+            <p style="font-size:14px; color:#aaa;">出題者は下のボタンを押して数値を確認し、<br>ヒントを口頭/チャットで伝えてください</p>
+            
+            <button class="peek-btn" onmousedown="revealTarget(true)" onmouseup="revealTarget(false)" ontouchstart="revealTarget(true)" ontouchend="revealTarget(false)">
+                押している間だけ答えを見る<br>(自分だけに見えます)
+            </button>
+            <div id="secret-target" class="big-number peek-content">??</div>
+            
+            <button class="btn" onclick="nextPhase('GUESS')">ヒントを出した (回答へ)</button>
+        </div>
+
+        <div id="phase-guess" class="hidden">
+            <p>チームで相談して位置を決めよう！</p>
+            <div class="big-number" id="guess-display">50</div>
+            <input type="range" id="slider" min="0" max="100" value="50" oninput="onSliderChange(this.value)" onchange="onSliderChange(this.value)">
+            <button class="btn" onclick="nextPhase('COUNTER')">予想を確定する</button>
+        </div>
+
+        <div id="phase-counter" class="hidden">
+            <p>敵チームのチャンス！<br>正解は予想(<span id="locked-guess"></span>)より...</p>
+            <div style="display:flex; justify-content:space-between;">
+                <button class="btn btn-choice" style="width:48%" onclick="submitCounter('Left')">⬅️ 左</button>
+                <button class="btn btn-choice" style="width:48%" onclick="submitCounter('Right')">右 ➡️</button>
+            </div>
+            <p style="font-size:12px; color:#aaa; margin-top:10px;">※誤差0なら強制スキップされます</p>
+        </div>
+
+        <div id="phase-result" class="hidden">
+            <div class="result-viz-container" id="viz-bar"></div>
+            <div id="result-details" style="text-align:left; font-size:14px; line-height:1.6;"></div>
+            <button class="btn btn-green" onclick="startNewRound()">次のラウンドへ</button>
+        </div>
+
+        <div id="phase-win" class="hidden">
+            <h1>WINNER!</h1>
+            <div style="font-size:60px;">🏆</div>
+            <h2 id="winner-name">TEAM A</h2>
+            <button class="btn btn-red" onclick="resetGame()">リセットして再戦</button>
+        </div>
+    </div>
+
+    <script>
+        // ★★★ ここに Firebase の設定を貼り付けてください ★★★
+        const firebaseConfig = {
+  apiKey: "AIzaSyDTnNp8ObeesaXjjBQqlC1MPLPh8V5SfPM",
+  authDomain: "wavelength-online-2c27b.firebaseapp.com",
+  databaseURL: "https://wavelength-online-2c27b-default-rtdb.firebaseio.com",
+  projectId: "wavelength-online-2c27b",
+  storageBucket: "wavelength-online-2c27b.firebasestorage.app",
+  messagingSenderId: "1057840306391",
+  appId: "1:1057840306391:web:432e632f9af1f286643892"
+};
+        // ★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+        // Firebase初期化
+        if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
+        const db = firebase.database();
+
+        let roomId = "";
+        let gameState = {};
+        const WIN_SCORE = 10;
+        const TEAM_CONF = { A: {color:"#2196F3"}, B: {color:"#F44336"} };
+        const RANGES = { w4: 2, w3: 5, w2: 8 };
+
+        // 部屋に入る
+        function joinRoom() {
+            const input = document.getElementById('room-id').value;
+            if(!input) return alert("合言葉を入れてください");
+            roomId = "wavelength_" + input; // 識別子をつける
+            
+            document.getElementById('display-room-id').innerText = input;
+            document.getElementById('screen-login').classList.add('hidden');
+            document.getElementById('screen-game').classList.remove('hidden');
+
+            // データベースの監視を開始 (これが同期のキモです！)
+            db.ref(roomId).on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    gameState = data;
+                    renderGame(); // 画面を更新
+                } else {
+                    // 部屋がまだない場合は初期化
+                    startNewRound(true);
+                }
+            });
+        }
+
+        // 状態をDBに保存する関数
+        function updateDB(updates) {
+            db.ref(roomId).update(updates);
+        }
+
+        // 新しいラウンドを開始 (初期化も兼ねる)
+        function startNewRound(fullReset = false) {
+            let nextTeam = 'A';
+            let scores = { A: 0, B: 0 };
+            let round = 1;
+
+            if (!fullReset && gameState.scores) {
+                scores = gameState.scores;
+                round = gameState.round + 1;
+                nextTeam = gameState.currentTeam === 'A' ? 'B' : 'A';
+            } else {
+                // 完全リセット時はランダム先攻
+                nextTeam = Math.random() < 0.5 ? 'A' : 'B';
+            }
+
+            updateDB({
+                phase: 'PSYCHIC', // PSYCHIC, GUESS, COUNTER, RESULT, WIN
+                currentTeam: nextTeam,
+                scores: scores,
+                round: round,
+                target: Math.floor(Math.random() * 101),
+                guess: 50,
+                counterGuess: null,
+                resultData: null
+            });
+        }
+
+        // スライダー操作の同期
+        function onSliderChange(val) {
+            // 連打防止のため、少し間引いてもいいが、今回は直接送信
+            updateDB({ guess: parseInt(val) });
+        }
+
+        // フェーズ進行
+        function nextPhase(next) {
+            if (next === 'COUNTER') {
+                // 誤差0判定（即結果へ）
+                let diff = Math.min(Math.abs(gameState.target - gameState.guess), 100 - Math.abs(gameState.target - gameState.guess));
+                if (diff === 0) {
+                    submitCounter(null); // 強制スキップ
+                    return;
+                }
+            }
+            updateDB({ phase: next });
+        }
+
+        // カウンター送信と結果計算
+        function submitCounter(direction) {
+            // 結果計算ロジック（サーバーレスなのでクライアント側で計算してDB更新）
+            const target = gameState.target;
+            const guess = gameState.guess;
+            const active = gameState.currentTeam;
+            const inactive = active === 'A' ? 'B' : 'A';
+
+            let diff = Math.abs(target - guess);
+            let finalDiff = Math.min(diff, 100 - diff);
+
+            let activePts = 0;
+            if (finalDiff === 0) activePts = 5;
+            else if (finalDiff <= RANGES.w4) activePts = 4;
+            else if (finalDiff <= RANGES.w3) activePts = 3;
+            else if (finalDiff <= RANGES.w2) activePts = 2;
+
+            // 敵のボーナス計算
+            let inactivePts = 0;
+            let resultMsg = "";
+            
+            if (finalDiff === 0) {
+                resultMsg = "完全一致のためボーナスなし";
+            } else {
+                // 正解方向
+                let d = target - guess;
+                if (d > 50) d -= 100;
+                if (d < -50) d += 100;
+                let trueDir = d > 0 ? 'Right' : 'Left';
+                
+                if (direction === trueDir) {
+                    inactivePts = 1;
+                    resultMsg = "敵チーム読み通り！ (+1点)";
+                } else {
+                    resultMsg = "敵チーム予想ハズレ...";
+                }
+            }
+
+            let newScores = { ...gameState.scores };
+            newScores[active] += activePts;
+            newScores[inactive] += inactivePts;
+
+            // DB更新
+            updateDB({
+                scores: newScores,
+                counterGuess: direction,
+                resultData: { activePts, inactivePts, finalDiff, msg: resultMsg },
+                phase: (newScores.A >= WIN_SCORE || newScores.B >= WIN_SCORE) ? 'WIN' : 'RESULT'
+            });
+        }
+
+        function resetGame() {
+            startNewRound(true);
+        }
+
+        // サイキックの答えをローカルでのみ表示
+        function revealTarget(show) {
+            const el = document.getElementById('secret-target');
+            if (show) {
+                el.innerText = gameState.target;
+                el.classList.add('peek-active');
+            } else {
+                el.classList.remove('peek-active');
+                setTimeout(() => el.innerText = "??", 300); // 隠してから文字戻す
+            }
+        }
+
+        // ★★★ 描画関数 (DBが変わるたびに呼ばれる) ★★★
+        function renderGame() {
+            const g = gameState;
+            const tm = TEAM_CONF[g.currentTeam];
+            const activeName = `TEAM ${g.currentTeam}`;
+            
+            // スコア更新
+            document.getElementById('score-a').innerText = g.scores.A;
+            document.getElementById('score-b').innerText = g.scores.B;
+
+            // ステータス表示
+            const statusEl = document.getElementById('status-text');
+            statusEl.style.color = tm.color;
+            
+            // フェーズごとの表示切り替え
+            ['psychic', 'guess', 'counter', 'result', 'win'].forEach(id => {
+                document.getElementById('phase-' + id).classList.add('hidden');
+            });
+
+            if (g.phase === 'PSYCHIC') {
+                statusEl.innerText = `${activeName} の出題ターン`;
+                document.getElementById('phase-psychic').classList.remove('hidden');
+            
+            } else if (g.phase === 'GUESS') {
+                statusEl.innerText = `${activeName} が相談中...`;
+                document.getElementById('phase-guess').classList.remove('hidden');
+                document.getElementById('guess-display').innerText = g.guess;
+                document.getElementById('slider').value = g.guess;
+                // スライダーの色を変える
+                document.getElementById('slider').style.accentColor = tm.color;
+
+            } else if (g.phase === 'COUNTER') {
+                const enemy = g.currentTeam === 'A' ? 'TEAM B' : 'TEAM A';
+                statusEl.innerText = `${enemy} のチャンス！`;
+                document.getElementById('phase-counter').classList.remove('hidden');
+                document.getElementById('locked-guess').innerText = g.guess;
+
+            } else if (g.phase === 'RESULT') {
+                statusEl.innerText = "結果発表";
+                document.getElementById('phase-result').classList.remove('hidden');
+                drawVisualResult(g.target, g.guess, tm.color);
+                
+                let html = `
+                    <p>正解: <strong style="color:#ffeb3b">${g.target}</strong> (誤差 ${g.resultData.finalDiff})</p>
+                    <p>${activeName}: <strong>+${g.resultData.activePts}点</strong></p>
+                    <p>チャンス: ${g.counterGuess === 'Right' ? '右' : (g.counterGuess === 'Left' ? '左' : 'なし')} → ${g.resultData.msg}</p>
+                `;
+                document.getElementById('result-details').innerHTML = html;
+
+            } else if (g.phase === 'WIN') {
+                document.getElementById('phase-win').classList.remove('hidden');
+                const winner = g.scores.A >= WIN_SCORE ? 'TEAM A' : 'TEAM B';
+                document.getElementById('winner-name').innerText = winner;
+                document.getElementById('winner-name').style.color = TEAM_CONF[winner.slice(-1)].color;
+            }
+        }
+
+        // 結果描画 (以前と同じロジック)
+        function drawVisualResult(target, guess, color) {
+            const container = document.getElementById('viz-bar');
+            container.innerHTML = ''; 
+            function createZone(w, cls) {
+                let s = target - w, e = target + w;
+                drawR(s, e, cls);
+                if (s < 0) drawR(100+s, 100, cls);
+                if (e > 100) drawR(0, e-100, cls);
+            }
+            function drawR(l, r, cls) {
+                let div = document.createElement('div');
+                div.className = 'zone ' + cls;
+                div.style.left = Math.max(0,l)+'%'; div.style.width = (Math.min(100,r)-Math.max(0,l))+'%';
+                container.appendChild(div);
+            }
+            createZone(8, 'zone-2'); createZone(5, 'zone-3'); createZone(2, 'zone-4');
+            
+            let pin = document.createElement('div');
+            pin.className = 'guess-pin';
+            pin.style.left = guess + '%';
+            pin.style.backgroundColor = color;
+            container.appendChild(pin);
+
+            let tPin = document.createElement('div');
+            tPin.className = 'target-pin';
+            tPin.style.left = target + '%';
+            container.appendChild(tPin);
+        }
+    </script>
+</body>
+</html>
