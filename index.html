@@ -124,15 +124,15 @@
     </div>
 
     <script>
-        // ★★★ Firebase設定 (前回と同じもの) ★★★
+        // ★★★ Firebase設定 (書き換え済み) ★★★
         const firebaseConfig = {
-            apiKey: "AIzaSyDxxxxxxxxxxxxxxxxxxxxxxxx",
-            authDomain: "wavelength-xxxxx.firebaseapp.com",
-            databaseURL: "https://wavelength-xxxxx-default-rtdb.firebaseio.com",
-            projectId: "wavelength-xxxxx",
-            storageBucket: "wavelength-xxxxx.appspot.com",
-            messagingSenderId: "00000000000",
-            appId: "1:00000000000:web:000000000000"
+          apiKey: "AIzaSyDTnNp8ObeesaXjjBQqlC1MPLPh8V5SfPM",
+          authDomain: "wavelength-online-2c27b.firebaseapp.com",
+          databaseURL: "https://wavelength-online-2c27b-default-rtdb.firebaseio.com",
+          projectId: "wavelength-online-2c27b",
+          storageBucket: "wavelength-online-2c27b.firebasestorage.app",
+          messagingSenderId: "1057840306391",
+          appId: "1:1057840306391:web:432e632f9af1f286643892"
         };
         // ★★★★★★★★★★★★★★★★★★★★★★★
 
@@ -184,6 +184,9 @@
                 db.ref(`${roomId}/players/${myId}`).set({
                     name: myName,
                     team: myTeam
+                }).catch(err => {
+                    // ここでエラーが出たら権限エラーの可能性大
+                    alert("エラー: データベースに書き込めません。Firebaseのルール設定を確認してください。\n" + err.message);
                 });
 
                 // 画面遷移
@@ -203,7 +206,6 @@
                     gameState = data;
                     renderGame();
                 } else {
-                    // 部屋データが消えた場合など
                     gameState = { phase: 'WAITING', players: {} };
                     renderGame();
                 }
@@ -247,9 +249,7 @@
 
         // スライダー操作
         function onSliderChange(val) {
-            // 親や敵チームが操作してもDB反映しないガードはUI側で行うが、念のため
             if (gameState.phase !== 'GUESS') return;
-            // 自分のターンかつ、自分は親ではない場合のみ送信
             if (gameState.currentTeam === myTeam && gameState.psychicId !== myId) {
                 db.ref(roomId).update({ guess: parseInt(val) });
             }
@@ -257,27 +257,20 @@
 
         // フェーズ進行
         function nextPhase(next) {
-            // 親しか押せないボタンなどのガード
             if (next === 'GUESS') {
                 if (myId !== gameState.psychicId) return;
             }
             if (next === 'COUNTER') {
-                 // 回答者しか押せない
                  if (myTeam !== gameState.currentTeam || myId === gameState.psychicId) return;
-
-                // 誤差0スキップ判定 (ただし「誤差0でも敵ターンへ行く」要望があったため削除せずに通過させる)
-                // もし「結果バレを防ぐために一応敵ターンに行く」ならそのままCOUNTERへ
             }
 
             db.ref(roomId).update({ phase: next });
         }
 
-        // チャンス（左右当て）送信
+        // チャンス送信
         function submitCounter(direction) {
-            // 敵チームしか押せない
             if (myTeam === gameState.currentTeam) return;
 
-            // 結果計算
             const target = gameState.target;
             const guess = gameState.guess;
             const active = gameState.currentTeam;
@@ -327,20 +320,18 @@
         }
 
 
-        // ★★★ 描画ロジック (権限管理のキモ) ★★★
+        // 描画ロジック
         function renderGame() {
             const g = gameState;
-            if (!g.phase) { // まだ始まってない
+            if (!g.phase) {
                 document.getElementById('phase-waiting').classList.remove('hidden');
                 return;
             } else {
                 document.getElementById('phase-waiting').classList.add('hidden');
             }
 
-            // プレイヤーリスト更新
             renderPlayerList(g.players || {});
             
-            // スコア
             document.getElementById('score-a').innerText = g.scores ? g.scores.A : 0;
             document.getElementById('score-b').innerText = g.scores ? g.scores.B : 0;
 
@@ -348,22 +339,17 @@
             const statusEl = document.getElementById('status-text');
             statusEl.style.color = tmConf.color;
 
-            // フェーズ初期化
             ['psychic', 'guess', 'counter', 'result', 'win'].forEach(id => {
                 document.getElementById('phase-' + id).classList.add('hidden');
             });
 
-            // --- 役割判定 ---
             const isActiveTeam = (myTeam === g.currentTeam);
             const isPsychic = (myId === g.psychicId);
             const isGuesser = (isActiveTeam && !isPsychic);
             const isEnemy = (!isActiveTeam);
 
-            // ステータス表示
             document.getElementById('my-role-text').innerText = 
                 isPsychic ? "あなたは親です" : (isGuesser ? "あなたは回答者です" : "敵チームのターン");
-
-            // --- フェーズ別表示 ---
 
             if (g.phase === 'PSYCHIC') {
                 document.getElementById('phase-psychic').classList.remove('hidden');
@@ -386,9 +372,8 @@
                 
                 const slider = document.getElementById('slider');
                 slider.value = g.guess;
-                slider.style.accentColor = tmConf.color; // チームカラー
+                slider.style.accentColor = tmConf.color;
 
-                // 操作権限: 回答者のみ操作可能
                 if (isGuesser) {
                     slider.disabled = false;
                     document.getElementById('btn-submit-guess').classList.remove('hidden');
@@ -406,7 +391,6 @@
                 statusEl.style.color = enemyConf.color;
                 document.getElementById('locked-guess').innerText = g.guess;
 
-                // 操作権限: 敵チームのみ
                 if (isEnemy) {
                     document.getElementById('btn-left').classList.remove('hidden');
                     document.getElementById('btn-right').classList.remove('hidden');
@@ -439,7 +423,6 @@
             }
         }
 
-        // プレイヤーリスト描画
         function renderPlayerList(players) {
             const listA = document.getElementById('list-a');
             const listB = document.getElementById('list-b');
@@ -460,7 +443,6 @@
             });
         }
 
-        // 結果描画
         function drawVisualResult(target, guess, color) {
             const container = document.getElementById('viz-bar');
             container.innerHTML = ''; 
